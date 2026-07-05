@@ -8,6 +8,8 @@ import os
 import re
 import sys
 from pathlib import Path
+import tkinter.messagebox
+from tkinter import Tk, filedialog
 
 import pdfplumber
 import requests
@@ -32,7 +34,8 @@ def extract_doi_from_pdf(pdf_path: str) -> str | None:
 def fetch_title(doi: str) -> str | None:
     """Query Crossref for the work title by DOI."""
     headers = {"User-Agent": CROSSREF_AGENT}
-    resp = requests.get(CROSSREF_URL.format(doi=doi), headers=headers, timeout=15)
+    resp = requests.get(CROSSREF_URL.format(doi=doi), headers=headers, verify=False, timeout=15)
+    # if beyond corporate firewall, set verify=False and ensure you have the certifi package installed
     if resp.status_code != 200:
         return None
     data = resp.json()
@@ -48,6 +51,7 @@ def sanitize_filename(title: str, max_len: int = 200) -> str:
     if len(safe) > max_len:
         safe = safe[:max_len].rsplit(" ", 1)[0]
     return safe or "untitled"
+
 
 
 def rename_pdf(pdf_path: str, title: str, dry_run: bool = False) -> str:
@@ -74,17 +78,29 @@ def rename_pdf(pdf_path: str, title: str, dry_run: bool = False) -> str:
     return str(dest)
 
 
+def select_files():
+    root = Tk()
+    root.withdraw()
+    return filedialog.askopenfilenames(title="Select PDF file(s)")
+
+
 def main():
     parser = argparse.ArgumentParser(
         description="Rename a PDF file using its title from Crossref."
     )
-    parser.add_argument("pdf", nargs="+", help="Path(s) to PDF file(s)")
+    parser.add_argument("--path", nargs="+", default=[], help="Path(s) to PDF file(s)")
     parser.add_argument(
         "--dry-run", action="store_true", help="Print renames without applying them"
     )
     args = parser.parse_args()
 
-    for pdf_path in args.pdf:
+    if not args.path:
+        files = select_files()
+    else:  
+        files = args.path
+
+
+    for pdf_path in files:
         print(f"\n--- {pdf_path} ---")
 
         if not os.path.isfile(pdf_path):
@@ -93,14 +109,17 @@ def main():
 
         doi = extract_doi_from_pdf(pdf_path)
         if not doi:
-            print(f"  Skipped: no DOI found on first page")
-            continue
+            print("  Skipped: no DOI found on first page")
+            doi = input("Enter DOI manually: ").strip()
+            if not doi:
+                continue
+
         print(f"  DOI:  {doi}")
 
         title = fetch_title(doi)
         if not title:
             print(f"  Skipped: could not fetch title from Crossref")
-            continue
+            title = "Untitled"
         print(f"  Title: {title}")
 
         new_path = rename_pdf(pdf_path, title, dry_run=args.dry_run)
